@@ -1517,6 +1517,44 @@ impl Game<'_> {
         }
     }
 
+    /// `CraftingMenu.slotsChanged` of guest `conn`'s open crafting table with its grid unchanged
+    /// (a mod's `player_crafting_changed`): the grid set again makes the result again, the mods
+    /// have their say as after a click, and the whole menu is sent. False when no table is open.
+    pub(super) fn lan_table_slots_changed(&mut self, conn: u32) -> bool {
+        let Some(host) = self.lan.as_mut() else {
+            return false;
+        };
+        let Some(gi) = host.hub.guests.iter().position(|g| g.conn == conn) else {
+            return false;
+        };
+        let Some((window, state, mut menu, pos)) = host
+            .menus
+            .get_mut(&conn)
+            .and_then(|play| play.crafting.table.take())
+        else {
+            return false;
+        };
+        let grid: Vec<Option<ItemStack>> = (1..10).map(|s| menu.slot(s).cloned()).collect();
+        let _ = self.guest_menu_op(gi, &mut menu, |menu, env| {
+            for (k, stack) in grid.into_iter().enumerate() {
+                menu.set_slot(env, 1 + k, stack);
+            }
+        });
+        if let Some(guest) = self.lan.as_ref().map(|host| &host.hub.guests[gi]) {
+            let (uuid, name) = (guest.uuid, guest.name.clone());
+            let mut result = menu.slot(0).cloned();
+            self.native_prepare_item_craft(uuid, &name, Some(pos), &mut result);
+            let env = self.menu_env();
+            menu.set_slot(&env, 0, result);
+        }
+        let Some(host) = self.lan.as_mut() else {
+            return false;
+        };
+        *host.menus.entry(conn).or_default().crafting.table = Some((window, state, menu, pos));
+        self.lan_send_table_content(conn);
+        true
+    }
+
     /// The whole crafting table menu for the client (`sendAllDataToRemote`).
     fn lan_send_table_content(&mut self, conn: u32) {
         let Some(host) = self.lan.as_mut() else {

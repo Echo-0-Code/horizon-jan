@@ -197,6 +197,15 @@ pub(crate) fn install() {
             can_fit_inside_container_items: |context, stack, fits| {
                 item_part(context, "can_fit_inside_container_items", stack, fits);
             },
+            // Every match is listed, so the matcher's choosing path runs in every test; the
+            // choice stays the first unless a test's `recipe_choice` setting names a recipe.
+            crafting_recipe_choice_listens: || true,
+            crafting_recipe_choice: |context, _, _, recipes, _, choice| {
+                let wanted = context.setting("recipe_choice", "pick");
+                if let Some(i) = wanted.and_then(|w| recipes.iter().position(|r| *r == w.trim())) {
+                    *choice = i as u32;
+                }
+            },
         });
         assert!(
             installed,
