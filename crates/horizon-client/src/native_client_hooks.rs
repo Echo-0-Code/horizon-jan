@@ -51,6 +51,12 @@ pub struct NativeClientHooks {
     /// `ItemPart::can_fit_inside_container_items` of the stack's item; `fits` arrives with
     /// vanilla's.
     pub can_fit_inside_container_items: fn(&LoopContext, &ItemStack, &mut bool),
+    /// Whether a mod listens to `crafting_recipe_choice`: the matcher then tries every recipe.
+    pub crafting_recipe_choice_listens: fn() -> bool,
+    /// `crafting_recipe_choice`: the grid (`width` wide), the matching recipes' ids and their
+    /// results; `choice` arrives as 0, the first match.
+    pub crafting_recipe_choice:
+        fn(&LoopContext, &[Option<ItemStack>], usize, &[String], &[ItemStack], &mut u32),
 }
 
 static HOOKS: OnceLock<NativeClientHooks> = OnceLock::new();
@@ -346,5 +352,28 @@ pub(crate) fn can_fit_inside_container_items(
 ) {
     if let Some(hooks) = HOOKS.get() {
         (hooks.can_fit_inside_container_items)(context, stack, fits);
+    }
+}
+
+/// Whether the crafting matcher should list every match for `crafting_recipe_choice`; false with
+/// no adapter installed, so the first match is made.
+pub(crate) fn crafting_recipe_choice_listens() -> bool {
+    HOOKS
+        .get()
+        .is_some_and(|hooks| (hooks.crafting_recipe_choice_listens)())
+}
+
+/// Ask the installed adapter which of `recipes` the grid makes; with none installed, `choice`
+/// keeps 0, the first match.
+pub(crate) fn crafting_recipe_choice(
+    context: &LoopContext,
+    grid: &[Option<ItemStack>],
+    width: usize,
+    recipes: &[String],
+    results: &[ItemStack],
+    choice: &mut u32,
+) {
+    if let Some(hooks) = HOOKS.get() {
+        (hooks.crafting_recipe_choice)(context, grid, width, recipes, results, choice);
     }
 }
