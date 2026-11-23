@@ -1,0 +1,47 @@
+name: test build
+# Jan's fork only: the Windows x64 game of this branch, to import with `horizon-launcher import-build`.
+on:
+  push:
+    branches: [test-build]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 300
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+      HORIZON_VERSION: 0.0.0-recipe-choice
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: rust
+        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
+          components: rust-src
+          targets: wasm32-unknown-unknown
+      - name: Build the game
+        run: cargo build --release --locked -p horizon-official --bin horizon-official
+      - name: Build the shared wasm standard library
+        env:
+          RUSTFLAGS: ''
+        run: cargo run --locked -p cargo-horizon-mod -- wasm-std horizon-wasm-std.wasm
+      - name: Package
+        run: |
+          mkdir -p out
+          cp target/release/horizon-official.exe out/horizon-client.exe
+          cp horizon-wasm-std.wasm out/horizon-wasm-std.wasm
+          out/horizon-client.exe --help | grep -q -- '--resources'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: horizon-windows-x64-recipe-choice
+          path: out/
+          if-no-files-found: error
+          retention-days: 3
