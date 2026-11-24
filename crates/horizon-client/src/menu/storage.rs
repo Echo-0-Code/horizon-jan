@@ -111,6 +111,11 @@ pub struct State {
     pub creative: bool,
     /// The selected hotbar slot (`Inventory.selected`).
     pub selected: usize,
+    /// The inventory slot a mod locked while a server's menu is open (0 to 35, or 40 for the
+    /// offhand; `MenuRef::lock_inventory_slot`): its menu slot gives nothing up and takes
+    /// nothing (`Slot.mayPickup`, `mayPlace`), and a swap naming it moves nothing, as AE2's
+    /// `AEBaseMenu.lockPlayerInventorySlot` does.
+    pub locked: Option<usize>,
     /// Dropped stacks (canonical text), `xp+N` and the like, in order.
     pub drops: Vec<String>,
     /// The dropped stacks themselves, for the caller to throw.

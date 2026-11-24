@@ -379,6 +379,10 @@ impl Menu {
         if target_slot.container == PLAYER && target_slot.index == inv_slot {
             return;
         }
+        // A number key or the offhand key naming the locked slot moves nothing.
+        if self.state.locked == Some(inv_slot) {
+            return;
+        }
         if self.swap_equip_source(env, target, inv_slot) {
             return;
         }

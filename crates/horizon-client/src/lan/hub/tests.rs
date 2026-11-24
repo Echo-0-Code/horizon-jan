@@ -10,6 +10,7 @@ mod ground_claim_tests;
 mod impulse_grace_tests;
 mod live_player_limit_tests;
 mod main_hand_tests;
+mod menu_slot_lock_tests;
 mod menu_sync_tests;
 mod ordered_inbox_tests;
 mod pending_move_bound_tests;

@@ -17,6 +17,7 @@ pub mod hash_ops;
 pub mod ids;
 pub mod item;
 pub mod menu_extra;
+pub mod menu_slot_lock;
 pub mod mod_list;
 pub mod packets;
 pub mod passage_sync;

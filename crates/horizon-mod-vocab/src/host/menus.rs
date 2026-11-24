@@ -113,6 +113,12 @@ pub trait MenusBackend {
     /// on outside creative.
     #[access(WorldOnly)]
     fn menu_slot_gives(&self, menu: MenuRef, slot: usize) -> Option<bool>;
+    /// Side: both.
+    /// The inventory slot locked while this menu is open (`lock_inventory_slot`; AE2's
+    /// `AEBaseMenu.lockPlayerInventorySlot`): 0 to 35, or 40 for the offhand. None when none
+    /// is locked, for a stale menu, and on a client for a menu the server locked nothing of.
+    #[access(WorldOnly)]
+    fn menu_locked_inventory_slot(&self, menu: MenuRef) -> Option<u32>;
 }
 /// The handles' client reads of the `menus` area, implemented by the game and reached through [`ClientBackend`].
 // hidden: a handle's backend, reached through `ClientBackend`; mods call the handle, never this trait
@@ -207,4 +213,21 @@ pub trait MenusBackendMut {
     /// inventory menu, which is never closed. A client closes its own screen with `close`.
     #[access(WorldOnly)]
     fn menu_close_container(&mut self, menu: MenuRef) -> bool;
+    /// Side: server.
+    /// Locks inventory slot `slot` (0 to 35, or 40 for the offhand; None unlocks) while this
+    /// menu stays open, as a Java menu opened from an item locks the slot holding it (AE2's
+    /// `AEBaseMenu.lockPlayerInventorySlot`, a backpack's own slot): its stack can't be picked
+    /// up, put down on, swapped (a number key or the offhand key naming it), thrown, cloned,
+    /// dragged over or gathered, and nothing can be put in it. Such a click moves nothing and
+    /// reaches no `menu_clicked`; the menu and the cursor go back to the client. An
+    /// `ItemPlace::MenuSlot` write of this menu to that slot moves nothing either, so a mod's
+    /// own quick move or gather skips it, while the slot's own place (`ItemPlace::PlayerSlot`)
+    /// still writes, so the owning mod can update the stack. A Horizon client is told, so its
+    /// prediction leaves the slot alone; a vanilla client is corrected by the resync. The lock
+    /// ends when the menu closes; locking again moves it. For a menu a mod opened with no block
+    /// (`player_open_mod_menu`, `open_menu`). False, and nothing changes, for a stale menu, a
+    /// client, another kind of menu or a slot that is no inventory slot. A
+    /// `MenuSlotPlace::HeldItem` backing of the main hand locks the slot holding it this way.
+    #[access(WorldOnly)]
+    fn menu_lock_inventory_slot(&mut self, menu: MenuRef, slot: Option<u32>) -> bool;
 }

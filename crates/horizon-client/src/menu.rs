@@ -859,6 +859,7 @@ impl Menu {
                 data: vec![0; data],
                 creative: false,
                 selected: 0,
+                locked: None,
                 drops: Vec::new(),
                 dropped: Vec::new(),
                 quick_status: 0,
@@ -1618,7 +1619,7 @@ impl Menu {
     // ---- Slot ----
 
     fn may_place(&self, env: &Env, s: usize, stack: &ItemStack) -> bool {
-        if self.state.slots[s].role == Role::Hidden {
+        if self.state.slots[s].role == Role::Hidden || self.is_locked(s) {
             return false;
         }
         let own = self.vanilla_may_place(env, s, stack);
@@ -1687,7 +1688,16 @@ impl Menu {
         stack.item.ends_with("_banner")
     }
 
+    /// Whether menu slot `s` shows the inventory slot a mod locked (`State::locked`).
+    fn is_locked(&self, s: usize) -> bool {
+        let slot = self.state.slots[s];
+        slot.container == PLAYER && self.state.locked == Some(slot.index)
+    }
+
     fn may_pickup(&self, env: &Env, s: usize) -> bool {
+        if self.is_locked(s) {
+            return false;
+        }
         match self.state.slots[s].role {
             Role::Inert | Role::Hidden => false,
             Role::CraftResult => self.crafting_result_is_current(env, s),
@@ -3224,6 +3234,42 @@ pub(crate) mod tests {
             menu.click(env, 0, 0, Input::Swap).unwrap();
             assert_eq!(menu.slot(0).unwrap().count, 8);
             assert_eq!(menu.player_item(0).unwrap().count, 2);
+        });
+    }
+
+    /// The inventory slot a mod locked while its menu is open (AE2's
+    /// `AEBaseMenu.lockPlayerInventorySlot`): the prediction neither takes it, puts on it,
+    /// swaps it with a number key, nor gathers from it, and the other slots work as before.
+    #[test]
+    fn a_locked_inventory_slot_gives_nothing_up_and_takes_nothing() {
+        bare_env(|env| {
+            let mut menu = Menu::new(Kind::Chest(3));
+            menu.set_player_item(0, stack("compass", 1));
+            menu.set_player_item(1, stack("stone", 8));
+            menu.set_player_item(2, stack("stone", 8));
+            menu.locked = Some(0);
+            // Hotbar slot n is menu slot 54 + n.
+            menu.click(env, 54, 0, Input::Pickup).unwrap();
+            assert_eq!(menu.carried, None, "the locked stack stays put");
+            menu.click(env, 0, 0, Input::Swap).unwrap();
+            assert_eq!(menu.slot(0), None, "a number key naming it moves nothing");
+            menu.click(env, 54, 1, Input::Swap).unwrap();
+            assert_eq!(menu.player_item(1).map(|s| s.count), Some(8));
+            // A carried stack can't go down on it.
+            menu.click(env, 55, 0, Input::Pickup).unwrap();
+            menu.click(env, 54, 0, Input::Pickup).unwrap();
+            assert_eq!(menu.carried.as_ref().map(|s| s.count), Some(8));
+            assert!(
+                menu.player_item(0)
+                    .is_some_and(|s| &*s.item == "minecraft:compass")
+            );
+            // Unlocked, the same number key moves it.
+            menu.locked = None;
+            menu.click(env, 0, 0, Input::Swap).unwrap();
+            assert!(
+                menu.slot(0)
+                    .is_some_and(|s| &*s.item == "minecraft:compass")
+            );
         });
     }
 

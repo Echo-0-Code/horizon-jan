@@ -195,6 +195,24 @@ pub enum NativeMenuEvent {
     PlacesChanged { uuid: u128, window: i32 },
 }
 
+/// Whether a click on a native mod's menu of `size` container slots would move the stack in
+/// the inventory slot `locked` (0 to 35, or 40 for the offhand) that a mod locked while the
+/// menu is open (AE2's `AEBaseMenu.lockPlayerInventorySlot`): any click on the menu slot that
+/// shows it (the menu's own slots first, then the inventory's 27, then the hotbar's 9), or a
+/// number-key or offhand swap (`SWAP`, mode 2) whose button names it. Such a click moves
+/// nothing.
+pub fn click_moves_locked(size: usize, locked: usize, slot: i32, button: i32, mode: i32) -> bool {
+    let shown = usize::try_from(slot)
+        .ok()
+        .and_then(|slot| slot.checked_sub(size))
+        .and_then(|n| match n {
+            0..27 => Some(n + 9),
+            27..36 => Some(n - 27),
+            _ => None,
+        });
+    shown == Some(locked) || (mode == 2 && usize::try_from(button).ok() == Some(locked))
+}
+
 /// The y of the key a chest minecart's or chest boat's items are kept under
 /// while a menu shows them.
 pub const VEHICLE_KEY_Y: i32 = -100_000;

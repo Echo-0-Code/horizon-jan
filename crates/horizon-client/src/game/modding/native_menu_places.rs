@@ -10,7 +10,6 @@
 //! work: `GuestMenus::slot_places` stays `None` and every path below returns first.
 use super::Game;
 use super::api_values::TryIntoEngine;
-use super::native_menus::native_menu_inventory_slot;
 use horizon_client::items::ItemStack;
 use horizon_client::lan::{
     guest::Guest,
@@ -27,7 +26,8 @@ pub(in crate::game) struct MenuSlotPlaces {
     window: i32,
     /// What container slot `n` shows; slots past these stay the mods' own.
     places: Vec<MenuSlotPlace>,
-    /// The hotbar slot holding a main-hand `HeldItem` place's stack, which takes no click.
+    /// The hotbar slot holding a main-hand `HeldItem` place's stack, locked while the menu is
+    /// open (`lock_native_menu_slot`), so the backing can take its lock away again.
     locked: Option<usize>,
     /// The stacks the `HeldItem` places were bound to when the slots were backed, by hand (main,
     /// off): the inventory slot holding it and the stack without its contents
@@ -174,6 +174,11 @@ impl Game<'_> {
             .as_ref()
             .filter(|old| old.window == window)
             .map_or(0, |old| old.places.len());
+        // The hotbar slot this window's old backing locked.
+        let was_locked = entry
+            .as_ref()
+            .filter(|old| old.window == window)
+            .and_then(|old| old.locked);
         *entry = (count > 0).then_some(MenuSlotPlaces {
             window,
             places,
@@ -182,6 +187,11 @@ impl Game<'_> {
             mod_bound,
             noticed: false,
         });
+        // The held stack's own slot is locked while the menu is open, so it can't go into
+        // itself; a backing that holds no main-hand stack any more takes its lock away.
+        if locked.is_some() || was_locked.is_some() {
+            lan.hub.lock_native_menu_slot(conn, window, locked);
+        }
         if let Some(index) = lan.hub.guests.connection_index(conn)
             && let Some(shown) = lan.hub.guests.native_menu_mut(index)
         {
@@ -212,10 +222,10 @@ impl Game<'_> {
         backed.places.get(n).copied()
     }
 
-    /// The backing of `conn`'s menu: its window, how many slots and the locked hotbar slot.
-    fn menu_places_of(&self, conn: u32) -> Option<(i32, usize, Option<usize>)> {
+    /// The backing of `conn`'s menu: its window and how many slots.
+    fn menu_places_of(&self, conn: u32) -> Option<(i32, usize)> {
         let backed = self.lan.as_ref()?.menus.get(&conn)?.slot_places.as_ref()?;
-        Some((backed.window, backed.places.len(), backed.locked))
+        Some((backed.window, backed.places.len()))
     }
 
     fn forget_menu_places(&mut self, conn: u32) {
@@ -271,7 +281,7 @@ impl Game<'_> {
     /// resolving or a held place's stack is no longer the bound one. False when it closed or was
     /// not open.
     fn refresh_menu_places(&mut self, conn: u32, uuid: u128, menu: MenuRef) -> bool {
-        let Some((window, count, _)) = self.menu_places_of(conn) else {
+        let Some((window, count)) = self.menu_places_of(conn) else {
             return false;
         };
         let player = menu.fields().player;
@@ -405,7 +415,7 @@ impl Game<'_> {
         let Some(conn) = self.native_conn(uuid) else {
             return false;
         };
-        let Some((backed_window, count, locked)) = self.menu_places_of(conn) else {
+        let Some((backed_window, count)) = self.menu_places_of(conn) else {
             return false;
         };
         let Some(size) = self
@@ -439,24 +449,22 @@ impl Game<'_> {
         if !(pickup || mode == 1) || (count..size).contains(&at) || at >= size + 36 {
             return false;
         }
-        let inventory = native_menu_inventory_slot(size, slot);
-        // The held backpack's own slot takes no click, so it can't go into itself; a click that
-        // takes a mod place's backpack out of its place is undone, for the same reason.
-        if inventory.is_none() || inventory != locked {
-            let bound = self.mod_bound_of(conn);
-            let host: &mut dyn ServerHost = self;
-            let _ = host.transaction(|host, _| {
-                if pickup {
-                    click_pickup(host, menu, at, button == 1);
-                } else {
-                    click_quick_move(host, menu, at, size, count);
-                }
-                match mod_places_bound(host, &bound) {
-                    true => Ok(()),
-                    false => Err(()),
-                }
-            });
-        }
+        // The held backpack's own slot is locked (`lock_native_menu_slot`): no click on it gets
+        // here. A click that takes a mod place's backpack out of its place is undone, so it
+        // can't go into itself either.
+        let bound = self.mod_bound_of(conn);
+        let host: &mut dyn ServerHost = self;
+        let _ = host.transaction(|host, _| {
+            if pickup {
+                click_pickup(host, menu, at, button == 1);
+            } else {
+                click_quick_move(host, menu, at, size, count);
+            }
+            match mod_places_bound(host, &bound) {
+                true => Ok(()),
+                false => Err(()),
+            }
+        });
         if self.refresh_menu_places(conn, uuid, menu)
             && let Some(lan) = self.lan.as_mut()
         {
@@ -700,8 +708,26 @@ mod tests {
             assert_eq!(ItemPlace::MenuSlot { menu, slot: 27 }.stack(host), None);
             assert_eq!(ItemPlace::MenuSlot { menu, slot: 0 }.amount(host), 64);
 
-            // The box's own hotbar slot (menu slot 54) takes no click.
-            assert!(game.place_menu_click(123, window, 54, 0, 0));
+            // The box's own hotbar slot (menu slot 54) is locked: a click on it, or a number
+            // key naming it, moves nothing.
+            assert_eq!(menu.locked_inventory_slot(&*game), Some(0));
+            for (slot, button, input) in [(54, 0, 0), (28, 0, 2)] {
+                game.lan_guest_packet(
+                    1,
+                    horizon_protocol::packets::play::Serverbound::ContainerClick(
+                        horizon_protocol::packets::play::ContainerClick {
+                            container: window,
+                            state: 0,
+                            slot,
+                            button,
+                            input,
+                            changed: Vec::new(),
+                            carried: None,
+                        },
+                    ),
+                );
+                game.run_native_menu_events();
+            }
             let host: &mut dyn ServerHost = game;
             assert_eq!(menu.cursor().stack(host), None);
             let held = ItemPlace::PlayerHand {
@@ -840,7 +866,11 @@ mod tests {
             );
             assert!(game.place_menu_click(123, window, 27, 0, 1));
             let host: &mut dyn ServerHost = game;
-            assert_eq!(held_slot(0).amount(host), 64, "the box in the hand holds it");
+            assert_eq!(
+                held_slot(0).amount(host),
+                64,
+                "the box in the hand holds it"
+            );
             let guest = game.lan.as_ref().unwrap().hub.guest(1).unwrap();
             let boxes = guest
                 .inventory
@@ -1032,7 +1062,11 @@ mod tests {
                 player: 123,
                 slot: 9,
             };
-            assert_eq!(carried.amount(host), 64, "the stone stayed in the inventory");
+            assert_eq!(
+                carried.amount(host),
+                64,
+                "the stone stayed in the inventory"
+            );
         });
     }
 }

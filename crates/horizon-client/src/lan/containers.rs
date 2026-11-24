@@ -408,6 +408,8 @@ impl Hub {
         self.close_container_at(i);
         let window = self.guests.update(i, |g| {
             let window = g.next_menu_window();
+            // A new window starts with no slot locked, whatever an earlier one of its id had.
+            g.native_menu_lock = None;
             if slots == Slots::Native {
                 g.native_menu = items.clone();
             }
@@ -461,6 +463,47 @@ impl Hub {
         Some(window)
     }
 
+    /// Locks inventory slot `slot` (0 to 35, or 40 for the offhand; None unlocks) of `conn`'s
+    /// open native menu `window` until it closes (AE2's `AEBaseMenu.lockPlayerInventorySlot`):
+    /// a click that would move that slot's stack moves nothing and reaches no mod
+    /// ([`super::menu::click_moves_locked`]). The client is told, so its prediction leaves the
+    /// slot alone. False, and nothing changes, for another window, a menu that is not a native
+    /// mod's, or a slot that is no inventory slot.
+    pub fn lock_native_menu_slot(&mut self, conn: u32, window: i32, slot: Option<usize>) -> bool {
+        if slot.is_some_and(|s| !(s < 36 || s == 40)) {
+            return false;
+        }
+        self.update_guest(conn, |g| {
+            if !g
+                .menu
+                .as_ref()
+                .is_some_and(|m| m.window == window && m.slots == Slots::Native)
+            {
+                return false;
+            }
+            g.native_menu_lock = slot.map(|s| (window, s));
+            let lock = horizon_protocol::menu_slot_lock::Lock {
+                window,
+                slot: slot.and_then(|s| u8::try_from(s).ok()),
+            };
+            g.send(&C::CustomPayload(CustomPayload {
+                channel: horizon_protocol::menu_slot_lock::CHANNEL.into(),
+                data: horizon_protocol::menu_slot_lock::encode(lock),
+            }));
+            true
+        })
+        .unwrap_or(false)
+    }
+
+    /// The inventory slot locked on `conn`'s open native menu `window`, if any.
+    pub fn native_menu_lock(&self, conn: u32, window: i32) -> Option<usize> {
+        let g = self.guest(conn)?;
+        g.menu.as_ref().filter(|m| m.window == window)?;
+        g.native_menu_lock
+            .filter(|(locked, _)| *locked == window)
+            .map(|(_, slot)| slot)
+    }
+
     /// The open menu of `conn` has no `hidden` container slots: a mod's screen
     /// does not show them, so a click or a shift-click never reaches them.
     pub fn hide_menu_slots(&mut self, conn: u32, hidden: Vec<usize>) {
@@ -494,6 +537,7 @@ impl Hub {
         items.resize(size, None);
         let window = self.guests.update(i, |g| {
             g.native_menu = items.clone();
+            g.native_menu_lock = None;
             let window = g.next_menu_window();
             g.send(&C::OpenScreen(play::OpenScreen {
                 container: window,
@@ -644,6 +688,7 @@ impl Hub {
             }));
             if menu.slots == Slots::Native {
                 g.native_menu.clear();
+                g.native_menu_lock = None;
                 Some((g.uuid, menu.window))
             } else {
                 None
@@ -675,6 +720,7 @@ impl Hub {
                 let native = g.menu.take().is_some_and(|m| m.slots == Slots::Native);
                 if native {
                     g.native_menu.clear();
+                    g.native_menu_lock = None;
                     Some(g.uuid)
                 } else {
                     None
@@ -760,6 +806,22 @@ impl Hub {
         // A native mod's menu: the click is the mod's to answer, and the
         // whole menu and the cursor go back as they were.
         if in_menu && self.guests[i].menu.as_ref().map(|m| m.slots) == Some(Slots::Native) {
+            // The slot a mod locked while this menu is open gives up nothing and takes nothing:
+            // the click reaches no mod, and the client is put right.
+            let g = &self.guests[i];
+            if let (Some(m), Some((window, locked))) = (g.menu.as_ref(), g.native_menu_lock)
+                && window == p.container
+                && super::menu::click_moves_locked(
+                    m.size,
+                    locked,
+                    i32::from(p.slot),
+                    i32::from(p.button),
+                    p.input,
+                )
+            {
+                self.resend_menu(conn, p.container, world);
+                return None;
+            }
             self.native_menu_events.push(NativeMenuEvent::Click {
                 uuid: self.guests[i].uuid,
                 window: p.container,

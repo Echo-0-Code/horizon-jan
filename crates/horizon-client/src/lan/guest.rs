@@ -431,6 +431,11 @@ pub struct Guest {
     pub ender_items: Vec<Option<ItemStack>>,
     /// What a native mod's menu shows (`Slots::Native`), while one is open.
     pub native_menu: Vec<Option<ItemStack>>,
+    /// The inventory slot a mod locked while its native menu is open
+    /// (`MenuRef::lock_inventory_slot`): the menu's window and the slot (0 to 35, or 40 for
+    /// the offhand). A lock of another window than the open one holds nothing; opening a
+    /// menu forgets it.
+    pub native_menu_lock: Option<(i32, usize)>,
     pub health: f32,
     /// The saved `AbsorptionAmount`, until the player's first body on the
     /// server takes it (the body holds the live amount).
@@ -872,6 +877,7 @@ impl Guest {
             craft_result: None,
             ender_items: vec![None; 27],
             native_menu: Vec::new(),
+            native_menu_lock: None,
             health: 20.0,
             saved_absorption: None,
             food: 20,

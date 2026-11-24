@@ -1,0 +1,8 @@
+ids = [
+    "call:Backend::menu_locked_inventory_slot",
+    "call:BackendMut::menu_lock_inventory_slot",
+    "handle:MenuRef::locked_inventory_slot",
+    "handle:MenuRef::lock_inventory_slot",
+]
+why = "A mod menu opened from an item can lock the inventory slot holding that item while the menu is open, as Java menus do (AE2's AEBaseMenu.lockPlayerInventorySlot, Sophisticated Backpacks' own backpack slot): MenuRef::lock_inventory_slot, read back with MenuRef::locked_inventory_slot. Clicks that would move the locked stack move nothing, on the server and in a Horizon client's prediction."
+migrate = "Additive. Mods that refused clicks on the slot in menu_clicked themselves can lock it instead."

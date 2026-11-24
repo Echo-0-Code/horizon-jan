@@ -38,6 +38,17 @@ impl Game<'_> {
             C::CustomPayload(p) if p.channel == horizon_protocol::menu_extra::CHANNEL => {
                 self.receive_menu_extra(&p.data);
             }
+            // The inventory slot a mod locked while the open menu stays open.
+            C::CustomPayload(p) if p.channel == horizon_protocol::menu_slot_lock::CHANNEL => {
+                match horizon_protocol::menu_slot_lock::decode(&p.data) {
+                    Ok(lock) => {
+                        if let Some(r) = self.remote.as_mut() {
+                            r.menu.lock(lock.window, lock.slot.map(usize::from));
+                        }
+                    }
+                    Err(e) => log::debug!("Horizon: a bad menu slot lock payload: {e}"),
+                }
+            }
             C::CustomPayload(p) if horizon_client::lan::recipes::viewer_channel(&p.channel) => {
                 self.remote_recipe_viewer(&p.channel, &p.data);
             }

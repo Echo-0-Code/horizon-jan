@@ -247,8 +247,8 @@ entity, as NeoForge's `StackCopySlot` and `ResourceHandlerSlot` do. Right after 
 slots with `player.back_mod_menu_slots(host, window, places)`, one `MenuSlotPlace` per slot:
 
 - `MenuSlotPlace::HeldItem { hand, slot }`: slot `slot` of the container inside the stack in the player's `hand`, through
-  its `ITEM_ITEMS` handler (a backpack's contents). While the menu is open, the hotbar slot holding a main-hand stack takes
-  no click, so the backpack can't go into itself.
+  its `ITEM_ITEMS` handler (a backpack's contents). While the menu is open, the hotbar slot holding a main-hand stack is
+  locked ([below](#locking-the-slot-a-menu-was-opened-from)), so the backpack can't go into itself.
 - `MenuSlotPlace::ModItem { provider, key, slot }`: slot `slot` of the container inside the stack at the mod place
   `ItemPlace::Mod { provider, key }` (a `PlaceProvider`'s, such as an accessory slot), through its `ITEM_ITEMS` handler: a
   backpack worn on the back. A click that would take that stack out of its place (when the provider keeps it in one of
@@ -298,6 +298,37 @@ usable on the screen. Use the screen render and input hooks for custom controls,
 any registered recipe-book layout.
 
 A vanilla menu and a menu no mod backed never take this path: their slots keep the backing they had.
+
+## Locking the slot a menu was opened from
+
+A Java menu opened from an item locks the inventory slot holding that item while it is open (AE2's
+`AEBaseMenu.lockPlayerInventorySlot` for a wireless terminal or a portable cell, a backpack's own slot), so the item
+can't be moved, thrown or put into itself while its screen shows it. For a menu a mod opened with no block
+(`player.open_mod_menu`, `open_menu`), `menu.lock_inventory_slot(host, Some(slot))` does the same, right after the
+open: `slot` is the inventory index, 0 to 35 (the hotbar is 0 to 8), or 40 for the offhand.
+
+While the menu stays open, a click that would move that slot's stack moves nothing and reaches no `menu_clicked`: a
+pickup, shift-click, throw, middle-click or drag on the menu slot that shows it, and a number-key or offhand swap
+(`SWAP`) whose button names it, on any slot. The server sends the menu and the cursor back, as for any refused click.
+An `ItemPlace::MenuSlot` write of this menu to that slot moves nothing either (`slot_holds` reads 0 and `slot_gives`
+false), so a mod's own quick move or gather skips it. The slot's own place, `ItemPlace::PlayerSlot`, still writes:
+the owning mod can keep updating the stack (a terminal's charge). A Horizon client is told (`horizon:menu_slot_lock`),
+so its prediction leaves the slot alone and nothing flickers; a vanilla client is put right by the resync.
+`menu.locked_inventory_slot(host)` reads the lock on either side.
+
+The lock ends when the menu closes or another opens; `lock_inventory_slot(host, None)` lifts it earlier, and locking
+again moves it. It returns false, and changes nothing, on a client, for a stale `MenuRef`, a menu that is not a mod's
+blockless one (a block's menu, a vanilla one, the inventory) or a slot that is no inventory slot.
+
+```rust,ignore
+// The terminal in the main hand opens its menu and keeps its slot.
+let slot = player.selected_slot(&*host)? as u32;
+if let Ok(Some(window)) = player.open_mod_menu(host, terminal_menu, title, Vec::new(), None, MenuReplace::CloseFirst)
+    && let Some(menu) = host.menu(player.uuid(), window)
+{
+    menu.lock_inventory_slot(host, Some(slot));
+}
+```
 
 ## A workstation with no block
 

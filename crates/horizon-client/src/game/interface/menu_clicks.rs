@@ -4,7 +4,11 @@
 use super::*;
 
 /// `ArmorSlot.mayPlace`: the stack's own `equippable` slot is the slot's.
-fn armor_slot_accepts(items: &horizon_client::items::Items, stack: &ItemStack, slot: usize) -> bool {
+fn armor_slot_accepts(
+    items: &horizon_client::items::Items,
+    stack: &ItemStack,
+    slot: usize,
+) -> bool {
     let wanted = ["head", "chest", "legs", "feet"][slot - 500];
     horizon_client::item_sync::equippable_slot(stack, items).as_deref() == Some(wanted)
 }
@@ -553,6 +557,8 @@ impl Game<'_> {
         };
         menu.creative = creative;
         menu.selected = self.selected;
+        // The slot a mod locked while the server's menu is open: the prediction leaves it.
+        menu.locked = self.remote_menu_lock();
         menu.levels = self.experience.level;
         if anvil_open {
             // The rename box as AnvilScreen.onNameChanged gives it to the menu.
@@ -1048,9 +1054,10 @@ mod stack_component_click_tests {
             .data_mut()
             .set_other("minecraft:max_stack_size", Some(Tag::Int(16)));
         assert_eq!(merge_max(&items, &stone), 16);
-        stone
-            .data_mut()
-            .set_other("!minecraft:max_stack_size", Some(Tag::compound(Vec::<(&str, Tag)>::new())));
+        stone.data_mut().set_other(
+            "!minecraft:max_stack_size",
+            Some(Tag::compound(Vec::<(&str, Tag)>::new())),
+        );
         assert_eq!(merge_max(&items, &stone), 1);
     }
 }

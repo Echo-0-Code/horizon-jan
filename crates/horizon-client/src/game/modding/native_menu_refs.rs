@@ -332,6 +332,9 @@ impl Game<'_> {
         slot: usize,
         stack: &ItemStack,
     ) -> Option<u32> {
+        if self.menu_slot_is_locked(menu, slot) {
+            return Some(0);
+        }
         let rules = self.native_menu_rules(menu, slot)?;
         Some(rules.slot_holds(&self.menu_env(), slot, stack))
     }
@@ -339,8 +342,58 @@ impl Game<'_> {
     /// Whether menu slot `slot` gives up what it holds (`Slot.mayPickup`): bound armour stays
     /// on outside creative.
     pub(super) fn menu_slot_gives(&self, menu: MenuRef, slot: usize) -> Option<bool> {
+        if self.menu_slot_is_locked(menu, slot) {
+            return Some(false);
+        }
         let rules = self.native_menu_rules(menu, slot)?;
         Some(rules.slot_gives(&self.menu_env(), slot))
+    }
+
+    /// Whether menu slot `slot` shows the inventory slot a mod locked while `menu` is open.
+    fn menu_slot_is_locked(&self, menu: MenuRef, slot: usize) -> bool {
+        let Some(MenuSlotBacking::Player(index)) = self.menu_slot_backing(menu, slot) else {
+            return false;
+        };
+        self.menu_locked_inventory_slot(menu)
+            .is_some_and(|locked| usize::try_from(locked).ok() == Some(index))
+    }
+
+    /// The inventory slot locked while `menu` is open (`menu_lock_inventory_slot`): the
+    /// server's lock of its guest's native menu, or on a client the lock the server sent for
+    /// the open menu.
+    pub(super) fn menu_locked_inventory_slot(&self, menu: MenuRef) -> Option<u32> {
+        let slot = if self.remote.is_some() {
+            self.native_client_menu_name(menu)?;
+            self.remote_menu_lock()?
+        } else {
+            let conn = self.native_menu_guest(menu)?.conn;
+            self.lan
+                .as_ref()?
+                .hub
+                .native_menu_lock(conn, menu.fields().window)?
+        };
+        u32::try_from(slot).ok()
+    }
+
+    /// Locks inventory slot `slot` (None unlocks) while the player's native menu `menu` is
+    /// open (AE2's `AEBaseMenu.lockPlayerInventorySlot`). Refuses clients, stale menus, the
+    /// inventory menu, a menu that is not a native mod's and a slot that is no inventory slot.
+    pub(super) fn menu_lock_inventory_slot(&mut self, menu: MenuRef, slot: Option<u32>) -> bool {
+        if !self.is_logical_server() || menu.fields().window == 0 {
+            return false;
+        }
+        let Some(conn) = self.native_menu_guest(menu).map(|guest| guest.conn) else {
+            return false;
+        };
+        let slot = match slot.map(usize::try_from) {
+            None => None,
+            Some(Ok(slot)) => Some(slot),
+            Some(Err(_)) => return false,
+        };
+        self.lan.as_mut().is_some_and(|lan| {
+            lan.hub
+                .lock_native_menu_slot(conn, menu.fields().window, slot)
+        })
     }
 
     /// The menu engine's model of `menu`, holding slot `slot`, for its slots' rules: the

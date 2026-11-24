@@ -1601,6 +1601,11 @@ impl Game<'_> {
     pub(super) fn remote_menu_type(&self) -> Option<&str> {
         self.remote_menu_type_body()
     }
+    /// The inventory slot the server locked while its open menu stays open
+    /// (`horizon:menu_slot_lock`).
+    pub(in crate::game) fn remote_menu_lock(&self) -> Option<usize> {
+        self.remote.as_ref()?.menu.locked()
+    }
     pub(super) fn remote_menu_title(&self) -> Option<horizon_client::text::Text> {
         self.remote_menu_title_body()
     }
@@ -2158,6 +2163,9 @@ impl horizon_client::interaction_input::InteractionWorld for RemoteInputWorld<'_
 pub(super) struct ClientMenu {
     current: Option<(i32, String)>,
     pub(super) generation: u64,
+    /// The inventory slot the server locked while this menu is open (`horizon:menu_slot_lock`):
+    /// the client's prediction leaves it alone. Every new or closed menu starts without one.
+    locked: Option<usize>,
 }
 
 impl ClientMenu {
@@ -2167,6 +2175,24 @@ impl ClientMenu {
             .checked_add(1)
             .expect("menu generation exhausted");
         self.current = current;
+        self.locked = None;
+    }
+
+    /// The server's lock of window `window`'s inventory slot; a lock of another window than
+    /// the open one is stale and changes nothing.
+    pub(super) fn lock(&mut self, window: i32, slot: Option<usize>) {
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|(open, _)| *open == window)
+        {
+            self.locked = slot;
+        }
+    }
+
+    /// The inventory slot locked while the open menu stays open.
+    pub(super) fn locked(&self) -> Option<usize> {
+        self.locked
     }
 
     pub(super) fn as_ref(&self) -> Option<&(i32, String)> {
