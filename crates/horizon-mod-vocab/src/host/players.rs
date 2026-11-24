@@ -1164,7 +1164,8 @@ pub trait PlayersBackendMut {
     /// for a mod whose `crafting_recipe_choice` answer changed while the grid did not (Polymorph's
     /// selection packet). Covers the inventory's grid, an open crafting table and an open mod
     /// crafting menu; the mods' `prepare_item_craft` has its say as after a click. Returns false
-    /// for a stale or unavailable player and one whose state is swapped in for a turn.
+    /// for a stale or unavailable player and one whose state is swapped in for a turn (code
+    /// running in that player's own turn): call it from the next `server_tick` instead.
     #[access(WorldOnly)]
     fn player_crafting_changed(&mut self, player: PlayerRef) -> bool;
     /// Side: server.

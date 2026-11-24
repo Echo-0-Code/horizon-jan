@@ -62,10 +62,17 @@ pub struct NativeClientHooks {
     pub can_fit_inside_container_items: fn(&LoopContext, &ItemStack, &mut bool),
     /// Whether a mod listens to `crafting_recipe_choice`: the matcher then tries every recipe.
     pub crafting_recipe_choice_listens: fn() -> bool,
-    /// `crafting_recipe_choice`: the grid (`width` wide), the matching recipes' ids and their
-    /// results; `choice` arrives as 0, the first match.
-    pub crafting_recipe_choice:
-        fn(&LoopContext, &[Option<ItemStack>], usize, &[String], &[ItemStack], &mut u32),
+    /// `crafting_recipe_choice`: who crafts, the grid (`width` wide), the matching recipes' ids
+    /// and their results; `choice` arrives as 0, the first match.
+    pub crafting_recipe_choice: fn(
+        &LoopContext,
+        crate::crafting::Crafter,
+        &[Option<ItemStack>],
+        usize,
+        &[String],
+        &[ItemStack],
+        &mut u32,
+    ),
 }
 
 static HOOKS: OnceLock<NativeClientHooks> = OnceLock::new();
@@ -402,6 +409,7 @@ pub(crate) fn crafting_recipe_choice_listens() -> bool {
 /// keeps 0, the first match.
 pub(crate) fn crafting_recipe_choice(
     context: &LoopContext,
+    crafter: crate::crafting::Crafter,
     grid: &[Option<ItemStack>],
     width: usize,
     recipes: &[String],
@@ -409,6 +417,6 @@ pub(crate) fn crafting_recipe_choice(
     choice: &mut u32,
 ) {
     if let Some(hooks) = HOOKS.get() {
-        (hooks.crafting_recipe_choice)(context, grid, width, recipes, results, choice);
+        (hooks.crafting_recipe_choice)(context, crafter, grid, width, recipes, results, choice);
     }
 }

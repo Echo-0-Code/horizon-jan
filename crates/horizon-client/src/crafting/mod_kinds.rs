@@ -213,9 +213,11 @@ pub(crate) mod tests;
 
 impl Recipes {
     /// Lookup preserves the dimensions supplied to recipe_for, including rectangles.
+    #[allow(clippy::too_many_arguments)]
     pub fn find_with_dimensions(
         &self,
         context: &LoopContext,
+        crafter: Crafter,
         grid: &[Option<ItemStack>],
         size: usize,
         width: usize,
@@ -272,6 +274,7 @@ impl Recipes {
         let mut choice = 0;
         crate::native_client_hooks::crafting_recipe_choice(
             context,
+            crafter,
             &cells,
             width,
             &recipes,
@@ -288,24 +291,22 @@ impl Recipes {
 
 /// The game's `crafting_recipe_choice` entry point: `choice` arrives as 0, the first match, and
 /// the mods listening may set it to another of `recipes`. Asked by `find_with_dimensions` only
-/// when the ingredients match more than one recipe.
+/// when the ingredients match more than one recipe; `player` and `crafter` say who crafts
+/// (`Crafter`).
 #[inline(never)]
-pub fn native_crafting_recipe_choice(
-    context: &LoopContext,
-    grid: &[Option<mod_api::ItemStack>],
-    width: u32,
-    recipes: &[String],
-    results: &[mod_api::ItemStack],
-    choice: &mut u32,
-) {
+pub fn native_crafting_recipe_choice(call: CraftingRecipeChoiceCall<'_>) {
     mod_api::dispatch_crafting_recipe_choice(
-        &horizon_client_render::api_context::LoopReader(context).context(),
-        grid,
-        width,
-        recipes,
-        results,
-        choice,
+        &horizon_client_render::api_context::LoopReader(call.context).context(),
+        call.values,
     );
+}
+
+/// A `crafting_recipe_choice` invocation: the loop context of the side that matches and the
+/// hook's declared arguments.
+#[doc(hidden)]
+pub struct CraftingRecipeChoiceCall<'a> {
+    pub context: &'a LoopContext,
+    pub values: mod_api::__private::CraftingRecipeChoiceCall<'a>,
 }
 
 impl Recipes {

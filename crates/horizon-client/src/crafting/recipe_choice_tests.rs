@@ -100,3 +100,53 @@ fn one_match_and_none_are_as_before() {
     let empty = [None, None, None, None];
     assert_eq!(made(&recipes, &picking("b:sticks"), &empty, 2), None);
 }
+
+#[test]
+fn the_choice_is_told_who_crafts() {
+    install();
+    let recipes = conflicting();
+    let grid = [
+        Some(ItemStack::new("minecraft:oak_log", 1)),
+        None,
+        None,
+        None,
+    ];
+    let told = |crafter: Crafter| {
+        crate::native_client_hooks::test_hooks::TOLD_CRAFTER.with(|t| t.set(None));
+        recipes.find_for(&picking("b:sticks"), crafter, &grid, 2, &|_| None);
+        crate::native_client_hooks::test_hooks::TOLD_CRAFTER.with(std::cell::Cell::get)
+    };
+    let player = Crafter::player(Some(0x1234));
+    assert_eq!(told(player), Some(player));
+    let block = Crafter::block([4, 64, -9]);
+    assert_eq!(told(block), Some(block));
+    // A lookup on nobody's behalf says so.
+    assert_eq!(
+        crate::native_client_hooks::test_hooks::TOLD_CRAFTER.with(|t| {
+            t.set(None);
+            recipes.find(&picking("b:sticks"), &grid, 2);
+            t.get()
+        }),
+        Some(Crafter::NOBODY)
+    );
+}
+
+#[test]
+fn with_no_listener_the_first_match_is_made_and_nobody_is_asked() {
+    use crate::native_client_hooks::test_hooks::{NOT_LISTENING, TOLD_CRAFTER};
+    install();
+    let recipes = conflicting();
+    let grid = [
+        Some(ItemStack::new("minecraft:oak_log", 1)),
+        None,
+        None,
+        None,
+    ];
+    NOT_LISTENING.with(|n| n.set(true));
+    TOLD_CRAFTER.with(|t| t.set(None));
+    let made = made(&recipes, &picking("b:sticks"), &grid, 2);
+    let asked = TOLD_CRAFTER.with(std::cell::Cell::get);
+    NOT_LISTENING.with(|n| n.set(false));
+    assert_eq!(made.unwrap().1, "minecraft:oak_planks");
+    assert_eq!(asked, None);
+}

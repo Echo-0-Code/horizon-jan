@@ -3,6 +3,7 @@
 //! asks (`native_client_hooks`) when a grid matches more than one recipe: the grid and the
 //! results cross to the mods, with the loop context of the side that matches, and no `Host`.
 use super::api_values::TryIntoApi;
+use horizon_client::crafting::Crafter;
 use horizon_client::items::ItemStack;
 use horizon_world::native_load_context::LoopContext;
 
@@ -15,6 +16,7 @@ pub(crate) fn listens() -> bool {
 /// `choice` at 0, the first match, and says so once per item.
 pub(crate) fn choose(
     context: &LoopContext,
+    crafter: Crafter,
     grid: &[Option<ItemStack>],
     width: usize,
     recipes: &[String],
@@ -32,9 +34,19 @@ pub(crate) fn choose(
         results.iter().map(TryIntoApi::try_into_api).collect();
     match (cells, outputs) {
         (Ok(cells), Ok(outputs)) => {
-            horizon_client::crafting::mod_kinds::native_crafting_recipe_choice(
-                context, &cells, width, recipes, &outputs, choice,
-            );
+            use horizon_client::crafting::mod_kinds as kinds;
+            kinds::native_crafting_recipe_choice(kinds::CraftingRecipeChoiceCall {
+                context,
+                values: mod_api::__private::CraftingRecipeChoiceCall {
+                    player: crafter.player,
+                    crafter: crafter.block,
+                    grid: &cells,
+                    width,
+                    recipes,
+                    results: &outputs,
+                    choice,
+                },
+            });
         }
         (Err(error), _) | (_, Err(error)) => refuse(error),
     }

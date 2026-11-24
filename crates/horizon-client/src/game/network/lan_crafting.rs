@@ -320,7 +320,13 @@ impl Game<'_> {
         let uuid = g.uuid;
         let mut result = self
             .recipes()
-            .find(&self.loop_context, &g.craft_grid, 2)
+            .find_for(
+                &self.loop_context,
+                horizon_client::crafting::Crafter::player(Some(uuid)),
+                &g.craft_grid,
+                2,
+                &|_| None,
+            )
             .map(|(_, stack)| stack);
         if mod_api::__private::listened(mod_api::HookId::PrepareItemCraft) {
             let name = g.name.clone();
