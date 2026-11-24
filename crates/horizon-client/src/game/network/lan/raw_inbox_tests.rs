@@ -61,6 +61,10 @@ fn a_message_from_another_level_runs_in_the_senders_turn_there() {
         with_guests(|game| {
             guest_in_the_nether(game);
             let transport = Transport::capture(Side::Server).unwrap();
+            assert!(
+                transport.local.owns(CHANNEL),
+                "the probe's channel is registered"
+            );
             transport
                 .accept(transport.local.manifest.entries())
                 .unwrap();
@@ -99,24 +103,27 @@ fn a_message_from_another_level_runs_in_the_senders_turn_there() {
     });
 }
 
-/// `isUnobstructed` in the guest's level sees no body of the outer player, who stands in the
-/// Overworld.
+/// The path `receive_raw_delivery` takes: guest 13 (the outer turn) stands in the Overworld, guest
+/// 12 sends from the Nether. In 12's turn there, `isUnobstructed` sees 13's body in the Overworld
+/// and none in the Nether (`for_player`'s order).
 #[test]
 #[ignore = "daily"]
 fn the_outer_body_stays_in_its_own_level_during_the_turn() {
     with_guests(|game| {
         guest_in_the_nether(game);
-        assert!(
-            game.player.is_some(),
-            "the fixture's own player stands in the Overworld"
-        );
-        game.enter_level(Dim::Nether).unwrap();
-        let in_the_nether = game
-            .as_guest_messaged_from(12, Dim::Overworld, |g| {
-                g.lan_building_boxes.boxes(Dim::Nether)
+        let (in_the_nether, in_the_overworld) = game
+            .as_guest(13, |g| {
+                g.as_payload_sender(12, |g| {
+                    (
+                        g.lan_building_boxes.boxes(Dim::Nether),
+                        g.lan_building_boxes.boxes(Dim::Overworld),
+                    )
+                })
             })
-            .unwrap();
-        game.enter_level(Dim::Overworld).unwrap();
-        assert_eq!(in_the_nether, Vec::new());
+            .unwrap()
+            .expect("12's turn runs inside 13's");
+        assert_eq!(in_the_nether, Vec::new(), "no body in the Nether");
+        assert_eq!(in_the_overworld.len(), 1, "13's body in the Overworld");
+        assert_eq!(game.dim, Dim::Overworld, "the outer level is back");
     });
 }
