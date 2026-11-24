@@ -469,10 +469,16 @@ pub fn apply_deprecated(map: &mut HashMap<String, String>, json: &[u8]) {
 /// characters in strings, `=` or `=>` and `;`), which vanilla reads lang files with (expected
 /// from `Language.loadFromJson`, Gson). A file that is not JSON even so adds nothing; a value
 /// that is not a string, number or boolean (`GsonHelper.convertToString`) ends the file there.
+///
+/// Each value then goes through [`supported_formats`], as vanilla's does.
 pub fn read_lang_file(bytes: &[u8], map: &mut HashMap<String, String>) {
     use horizon_world::datafix::json::{Json, parse_lenient};
     if let Ok(entries) = serde_json::from_slice::<HashMap<String, String>>(bytes) {
-        map.extend(entries);
+        map.extend(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key, supported_formats(value))),
+        );
         return;
     }
     let text = String::from_utf8_lossy(bytes);
@@ -489,7 +495,61 @@ pub fn read_lang_file(bytes: &[u8], map: &mut HashMap<String, String>) {
             Json::Bool(b) => b.to_string(),
             Json::Null | Json::Arr(_) | Json::Obj(_) => break,
         };
-        map.insert(String::from_utf16_lossy(&key), value);
+        map.insert(String::from_utf16_lossy(&key), supported_formats(value));
+    }
+}
+
+/// `Language.UNSUPPORTED_FORMAT_PATTERN` (`%(\d+\$)?[\d.]*[df]`) replaced with `%$1s`, which
+/// `Language.loadFromJson` runs on every value it loads: the game's text formatter only takes
+/// `%s`, so a lang file's `%d`, `%5d`, `%.2f` become `%s` and `%1$d` becomes `%1$s`. Matches
+/// don't overlap and the scan goes on after each one, as `Matcher.replaceAll` does (`%%d` is
+/// `%%s`); `\d` is ASCII in Java.
+pub fn supported_formats(text: String) -> String {
+    let bytes = text.as_bytes();
+    let digits = |from: usize| {
+        from + bytes[from..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count()
+    };
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        // `(\d+\$)?`, greedy: taken when digits end in `$`. Without it, `[\d.]*` would stop on
+        // that `$`, which isn't `[df]`, so leaving the group out can't match either.
+        let after_digits = digits(i + 1);
+        let index = (after_digits > i + 1 && bytes.get(after_digits) == Some(&b'$'))
+            .then(|| i + 1..after_digits + 1);
+        let mut end = index.as_ref().map_or(i + 1, |r| r.end);
+        end += bytes[end..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit() || **b == b'.')
+            .count();
+        if !matches!(bytes.get(end), Some(b'd' | b'f')) {
+            i += 1;
+            continue;
+        }
+        let out = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        out.push_str(&text[copied..i]);
+        out.push('%');
+        if let Some(index) = index {
+            out.push_str(&text[index]);
+        }
+        out.push('s');
+        copied = end + 1;
+        i = end + 1;
+    }
+    match out {
+        Some(mut out) => {
+            out.push_str(&text[copied..]);
+            out
+        }
+        None => text,
     }
 }
 
@@ -844,6 +904,52 @@ mod tests {
             es_ve.get("horizon.options.on_screen_keyboard"),
             Some("Teclado en pantalla")
         );
+    }
+
+    #[test]
+    fn a_lang_files_number_formats_load_as_string_formats() {
+        // Expected from java.util.regex on Language.UNSUPPORTED_FORMAT_PATTERN, replaceAll("%$1s").
+        let cases = [
+            ("%d", "%s"),
+            ("Stored: %d / %d", "Stored: %s / %s"),
+            ("%1$d of %2$d", "%1$s of %2$s"),
+            ("%.2f AE/t", "%s AE/t"),
+            ("%5d", "%s"),
+            ("%3.1f%%", "%s%%"),
+            ("%%d", "%%s"),
+            ("%1$s and %2$.1f", "%1$s and %2$s"),
+            ("%12$5.2f", "%12$s"),
+            ("%d%d", "%s%s"),
+            ("%1d$", "%s$"),
+            ("Läuft %d%%", "Läuft %s%%"),
+            ("100%", "100%"),
+            ("%1$", "%1$"),
+            ("%x", "%x"),
+            ("%$d", "%$d"),
+            ("%\u{661}d", "%\u{661}d"),
+        ];
+        let strict =
+            serde_json::to_vec(&serde_json::Map::from_iter(cases.iter().enumerate().map(
+                |(i, (from, _))| (format!("test.{i}"), serde_json::Value::from(*from)),
+            )))
+            .unwrap();
+        // The lenient reader's path too: a commented file.
+        let lenient = b"# a mod's text\n{test.lenient: 'Energy: %.1f / %1$d'}".to_vec();
+        let pack = Mem(HashMap::from([
+            ("assets/minecraft/lang/en_us.json".to_owned(), strict),
+            ("assets/horizon/lang/en_us.json".to_owned(), lenient),
+        ]));
+        let en = Language::load_with(&[&pack], "en_us", &[]);
+        for (i, (from, to)) in cases.iter().enumerate() {
+            assert_eq!(en.get(&format!("test.{i}")), Some(*to), "{from}");
+        }
+        assert_eq!(en.get("test.lenient"), Some("Energy: %s / %1$s"));
+        // And the text then fills in its arguments.
+        let ((), missing) = scoped(en, || {
+            assert_eq!(tr("test.1", &[&3, &64]), "Stored: 3 / 64");
+            assert_eq!(tr("test.2", &[&1, &2]), "1 of 2");
+        });
+        assert!(missing.is_empty(), "{missing:?}");
     }
 
     #[test]
