@@ -69,17 +69,24 @@ impl Game<'_> {
             // deferred is retried from the first pass, so their level is put in place for it,
             // as a leaving player's turn does.
             let back = self.dim;
+            // A handler's panic goes on only once the outer level is back in place.
+            let mut unwound = Ok(());
             if theirs == back || self.enter_level(theirs).is_ok() {
                 let endpoint = delivery.endpoint.clone();
                 let incoming = &mut delivery.incoming;
-                self.as_guest_messaged(conn, |game| {
-                    turn = Some(game.receive_server_payload(endpoint, incoming));
-                });
+                unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.as_guest_messaged(conn, |game| {
+                        turn = Some(game.receive_server_payload(endpoint, incoming));
+                    });
+                }));
             }
             if self.dim != back
                 && let Err(e) = self.enter_level(back)
             {
                 log::error!("could not reopen {}: {e}", back.id());
+            }
+            if let Err(payload) = unwound {
+                std::panic::resume_unwind(payload);
             }
         }
         let finished = match turn {
