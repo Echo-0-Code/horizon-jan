@@ -76,8 +76,13 @@ pub fn with_warden(guest: &mut Guest, tracker: Option<Tag>) -> &mut Guest {
 
 /// `PlayerDataStorage.load`: a guest's saved state, if they have been here
 /// before. The player's file, else its `.dat_old` (what a save cut off
-/// between its two renames leaves, `write_dat`).
-pub fn load(guest: &mut Guest, world: &Path) -> bool {
+/// between its two renames leaves, `write_dat`). Its stacks are built against
+/// `prototypes`, the item prototypes of the game that owns the world.
+pub fn load(
+    guest: &mut Guest,
+    world: &Path,
+    prototypes: &crate::item_data::ItemPrototypes,
+) -> bool {
     let file = path(world, guest.uuid);
     let Some(tag) = read_dat(&file).or_else(|| read_dat(&file.with_extension("dat_old"))) else {
         return false;
@@ -90,7 +95,7 @@ pub fn load(guest: &mut Guest, world: &Path) -> bool {
     };
     level.read_player(&tag);
     level.player_extra = Some(tag);
-    apply(guest, &level);
+    apply(guest, &level, prototypes);
     true
 }
 
@@ -102,16 +107,21 @@ pub fn load(guest: &mut Guest, world: &Path) -> bool {
 /// world opening found instead (the newest player file, the legacy
 /// `Data.Player`, or nothing in a new world). Returns whether the player has
 /// been in this world before.
-pub fn load_owner(guest: &mut Guest, world: &Path, saved: Option<&Level>) -> bool {
+pub fn load_owner(
+    guest: &mut Guest,
+    world: &Path,
+    saved: Option<&Level>,
+    prototypes: &crate::item_data::ItemPrototypes,
+) -> bool {
     if let Some(level) = saved.filter(|l| l.singleplayer_file) {
-        apply(guest, level);
+        apply(guest, level, prototypes);
         return level.position.is_some();
     }
-    if load(guest, world) {
+    if load(guest, world, prototypes) {
         return true;
     }
     saved.is_some_and(|level| {
-        apply(guest, level);
+        apply(guest, level, prototypes);
         level.position.is_some()
     })
 }
@@ -227,8 +237,14 @@ pub fn face_world_spawn(guest: &mut Guest, known: bool, [yaw, pitch]: [f32; 2]) 
     guest.head_yaw = yaw;
 }
 
-/// Give a guest the player state read into `level`.
-pub fn apply(guest: &mut Guest, level: &Level) {
+/// Give a guest the player state read into `level`. Its stacks are taken in as
+/// `ItemStack.CODEC` builds them against `prototypes`, the item prototypes of the
+/// game the guest joins (`clean_stack`): `level`'s read had no item table.
+pub fn apply(guest: &mut Guest, level: &Level, prototypes: &crate::item_data::ItemPrototypes) {
+    let clean = |mut stack: ItemStack| {
+        crate::item_data::clean_stack(&mut stack, prototypes);
+        stack
+    };
     if let Some(p) = level.position {
         guest.place(p);
     }
@@ -308,12 +324,17 @@ pub fn apply(guest: &mut Guest, level: &Level) {
             .and_then(|t| crate::save::number(t.get("Invulnerable")))
             .is_some_and(|v| v != 0),
         invulnerable_time: short("invulnerable_time", 0),
+        impulse: crate::save::saved_impulse(extra),
     });
     guest.saved_vehicle = level.root_vehicle;
     guest.recipe_book = level.recipe_book.clone();
     guest.dimension = level.dimension.clone();
     if level.ender_items.len() == 27 {
-        guest.ender_items = level.ender_items.clone();
+        guest.ender_items = level
+            .ender_items
+            .iter()
+            .map(|slot| slot.clone().map(clean))
+            .collect();
     }
     for (slot, item, count, damage) in &level.inventory {
         let mut stack = ItemStack {
@@ -325,6 +346,7 @@ pub fn apply(guest: &mut Guest, level: &Level) {
         if stack.count == 0 {
             stack.count = 1;
         }
+        let stack = clean(stack);
         match *slot {
             0..=35 => guest.inventory[usize::from(*slot)] = Some(stack),
             100 => guest.armor[3] = Some(stack),
@@ -528,7 +550,6 @@ impl Drop for Autosaves {
 /// Put a guest's state in `level`'s player fields; `vehicle` is the
 /// RootVehicle compound of the ride (`ServerPlayer.saveParentVehicle`).
 pub fn store(guest: &Guest, level: &mut Level, vehicle: Option<Tag>) {
-    level.player_impulse_grace = guest.motion.as_ref().map(|p| p.impulse.reset_grace_time);
     level.player_fall_particles = guest
         .motion
         .as_ref()
@@ -600,6 +621,8 @@ pub fn store(guest: &Guest, level: &mut Level, vehicle: Option<Tag>) {
         .as_deref()
         .map(SavedBody::of)
         .or(guest.loaded_body);
+    // LivingEntity.addAdditionalSaveData's impulse context, the live body's or the file's.
+    level.player_impulse = body.map(|b| b.impulse);
     if let Some(body) = body {
         level.fall_distance = body.fall_distance;
         level.motion = body.velocity;
