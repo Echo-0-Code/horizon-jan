@@ -60,17 +60,27 @@ impl Game<'_> {
         mut delivery: Box<horizon_client::raw_payloads::Delivery>,
     ) {
         // `ServerGamePacketListenerImpl.handleCustomPayload` runs on the server thread for
-        // the sending `ServerPlayer`: a handler acts as that player (a jump to another level,
-        // the system messages it earns) as a packet from them does. A delivery with no player
-        // in the world (configuration, a guest not placed yet, one already acting) keeps the
-        // plain server context.
+        // the sending `ServerPlayer`: a handler acts as that player, in their level, as a
+        // packet from them does. A delivery with no player in the world (configuration, a
+        // guest not placed yet, one already acting) keeps the plain server context.
         let mut turn = None;
-        if let Some(conn) = delivery.conn.filter(|&conn| self.payload_turn_open(conn)) {
-            let endpoint = delivery.endpoint.clone();
-            let incoming = &mut delivery.incoming;
-            self.as_guest_messaged(conn, |game| {
-                turn = Some(game.receive_server_payload(endpoint, incoming));
-            });
+        if let Some((conn, theirs)) = delivery.conn.and_then(|conn| self.payload_turn(conn)) {
+            // A first delivery is drained in the sender's own level pass; one a busy handler
+            // deferred is retried from the first pass, so their level is put in place for it,
+            // as a leaving player's turn does.
+            let back = self.dim;
+            if theirs == back || self.enter_level(theirs).is_ok() {
+                let endpoint = delivery.endpoint.clone();
+                let incoming = &mut delivery.incoming;
+                self.as_guest_messaged(conn, |game| {
+                    turn = Some(game.receive_server_payload(endpoint, incoming));
+                });
+            }
+            if self.dim != back
+                && let Err(e) = self.enter_level(back)
+            {
+                log::error!("could not reopen {}: {e}", back.id());
+            }
         }
         let finished = match turn {
             Some(finished) => finished,
@@ -88,13 +98,11 @@ impl Game<'_> {
 }
 
 impl Game<'_> {
-    /// Whether a payload from connection `conn` can run in that player's turn: they are in the
-    /// world, and not already the player acting.
-    fn payload_turn_open(&self, conn: u32) -> bool {
-        self.lan
-            .as_ref()
-            .and_then(|host| host.hub.guest(conn))
-            .is_some_and(|guest| guest.placed)
-            && !self.lan_guest_swaps.contains(&conn)
+    /// The level of the player on connection `conn` when a payload from them can run in their
+    /// turn: they are in the world, and not already the player acting.
+    fn payload_turn(&self, conn: u32) -> Option<(u32, crate::game::Dim)> {
+        let guest = self.lan.as_ref()?.hub.guest(conn)?;
+        (guest.placed && !self.lan_guest_swaps.contains(&conn))
+            .then(|| (conn, crate::game::Dim::from_id(&guest.dimension)))
     }
 }
