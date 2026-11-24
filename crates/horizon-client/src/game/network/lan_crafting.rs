@@ -1541,18 +1541,22 @@ impl Game<'_> {
             return false;
         };
         let grid: Vec<Option<ItemStack>> = (1..10).map(|s| menu.slot(s).cloned()).collect();
-        let _ = self.guest_menu_op(gi, &mut menu, |menu, env| {
-            for (k, stack) in grid.into_iter().enumerate() {
-                menu.set_slot(env, 1 + k, stack);
+        // The table is out of `host.menus` until it is written back below: as on a click, a mod
+        // opening a station meanwhile is refused, so the write back can't drop the new one.
+        self.with_station_busy(conn, |game| {
+            let _ = game.guest_menu_op(gi, &mut menu, |menu, env| {
+                for (k, stack) in grid.into_iter().enumerate() {
+                    menu.set_slot(env, 1 + k, stack);
+                }
+            });
+            if let Some(guest) = game.lan.as_ref().map(|host| &host.hub.guests[gi]) {
+                let (uuid, name) = (guest.uuid, guest.name.clone());
+                let mut result = menu.slot(0).cloned();
+                game.native_prepare_item_craft(uuid, &name, Some(pos), &mut result);
+                let env = game.menu_env();
+                menu.set_slot(&env, 0, result);
             }
         });
-        if let Some(guest) = self.lan.as_ref().map(|host| &host.hub.guests[gi]) {
-            let (uuid, name) = (guest.uuid, guest.name.clone());
-            let mut result = menu.slot(0).cloned();
-            self.native_prepare_item_craft(uuid, &name, Some(pos), &mut result);
-            let env = self.menu_env();
-            menu.set_slot(&env, 0, result);
-        }
         let Some(host) = self.lan.as_mut() else {
             return false;
         };
