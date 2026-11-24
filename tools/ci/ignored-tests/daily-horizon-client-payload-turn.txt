@@ -1,0 +1,2 @@
+# A client's mod message runs in the sending player's turn (handleCustomPayload): a real integrated server.
+horizon-client game::payload_transport::turn_tests::a_client_message_runs_in_the_senders_turn lib daily network

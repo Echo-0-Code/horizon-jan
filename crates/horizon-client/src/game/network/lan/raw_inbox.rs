@@ -59,8 +59,23 @@ impl Game<'_> {
         &mut self,
         mut delivery: Box<horizon_client::raw_payloads::Delivery>,
     ) {
-        let finished =
-            self.receive_server_payload(delivery.endpoint.clone(), &mut delivery.incoming);
+        // `ServerGamePacketListenerImpl.handleCustomPayload` runs on the server thread for
+        // the sending `ServerPlayer`: a handler acts as that player (a jump to another level,
+        // the system messages it earns) as a packet from them does. A delivery with no player
+        // in the world (configuration, a guest not placed yet, one already acting) keeps the
+        // plain server context.
+        let mut turn = None;
+        if let Some(conn) = delivery.conn.filter(|&conn| self.payload_turn_open(conn)) {
+            let endpoint = delivery.endpoint.clone();
+            let incoming = &mut delivery.incoming;
+            self.as_guest_messaged(conn, |game| {
+                turn = Some(game.receive_server_payload(endpoint, incoming));
+            });
+        }
+        let finished = match turn {
+            Some(finished) => finished,
+            None => self.receive_server_payload(delivery.endpoint.clone(), &mut delivery.incoming),
+        };
         let Some(host) = self.lan.as_mut() else {
             return;
         };
@@ -69,5 +84,17 @@ impl Game<'_> {
         } else {
             host.hub.finish_raw_payload(delivery.conn);
         }
+    }
+}
+
+impl Game<'_> {
+    /// Whether a payload from connection `conn` can run in that player's turn: they are in the
+    /// world, and not already the player acting.
+    fn payload_turn_open(&self, conn: u32) -> bool {
+        self.lan
+            .as_ref()
+            .and_then(|host| host.hub.guest(conn))
+            .is_some_and(|guest| guest.placed)
+            && !self.lan_guest_swaps.contains(&conn)
     }
 }

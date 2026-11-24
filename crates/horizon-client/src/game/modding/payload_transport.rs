@@ -363,6 +363,9 @@ mod sender_tests;
 #[path = "payload_transport/tests.rs"]
 mod tests;
 #[cfg(test)]
+#[path = "payload_transport/turn_tests.rs"]
+mod turn_tests;
+#[cfg(test)]
 #[path = "payload_transport/typed_tests.rs"]
 mod typed_tests;
 #[cfg(test)]
