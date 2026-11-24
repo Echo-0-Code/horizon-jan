@@ -25,7 +25,8 @@ const REASONS: [&str; 2] = [
 ];
 
 /// One handled payload: (sender, acting player, target, answer). A main-thread payload
-/// handler runs outside any guest turn: no acting player, both reached as connected records.
+/// handler runs in its sender's turn: the sender is the acting player, the target reached as a
+/// connected record.
 type Handled = (u128, Option<u128>, u128, Result<bool, TextFormError>);
 
 #[derive(Default)]
@@ -221,8 +222,8 @@ fn a_payload_handler_disconnects_once_and_the_poll_logs_out_once() {
             assert_eq!(
                 *probe.handled.lock().unwrap(),
                 [
-                    (uuid_one, None, uuid_two, Ok(true)),
-                    (uuid_one, None, uuid_one, Ok(true)),
+                    (uuid_one, Some(uuid_one), uuid_two, Ok(true)),
+                    (uuid_one, Some(uuid_one), uuid_one, Ok(true)),
                 ]
             );
             assert_eq!(
