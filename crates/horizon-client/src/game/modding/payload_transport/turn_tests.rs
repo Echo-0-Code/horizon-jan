@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 const NAME: &str = "game::payload_transport::turn_tests::a_client_message_runs_in_the_senders_turn";
 const CHANNEL: &str = "turn_probe:warp";
 const TOLD: &str = "turn probe: warped";
+const RETRIED: &str = "turn_probe:retried";
 
 /// What the server handler saw: whether the sender was the acting player, whether the jump into
 /// the Nether was taken, and whether the message was sent.
@@ -37,14 +38,47 @@ impl IPayloadHandler for Warp {
     }
 }
 
+/// What the handler of a message it first refused as busy saw when the server retried it: whether
+/// the sender was the acting player, and the level in place.
+static RETRY: Mutex<Vec<(bool, &'static str)>> = Mutex::new(Vec::new());
+static REFUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Busy the first time, so the server keeps the message and retries it from the first level pass.
+struct Retried;
+impl IPayloadHandler for Retried {
+    fn handle(
+        &self,
+        bytes: PayloadBytes,
+        context: &mut dyn IPayloadContext,
+    ) -> Result<(), mod_api::PayloadHandleError> {
+        if !REFUSED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err(mod_api::PayloadHandleError::Busy {
+                payload: bytes,
+                holder: mod_api::PayloadBusy::new(
+                    "turn_probe".into(),
+                    "test".into(),
+                    "test".into(),
+                    0,
+                ),
+            });
+        }
+        let failed = |e| mod_api::PayloadHandleError::Failed(format!("{e:?}"));
+        let player = context.player().map_err(failed)?;
+        let host = context.server_host().map_err(failed)?;
+        let acting = host.players().acting_player() == Some(player);
+        RETRY.lock().unwrap().push((acting, host.dimension()));
+        Ok(())
+    }
+}
+
 struct Registration;
 #[mod_api::__subscriptions]
 impl Hooks for Registration {
     fn register(&self, registrar: &mut dyn Registrar, _: &mod_api::RegistrationContext) {
-        registrar
-            .payload_handlers()
-            .registrar("1")
-            .play_to_server(PayloadId(CHANNEL.into()), Arc::new(Warp));
+        let mut payloads = registrar.payload_handlers();
+        let mut view = payloads.registrar("1");
+        view.play_to_server(PayloadId(CHANNEL.into()), Arc::new(Warp));
+        view.play_to_server(PayloadId(RETRIED.into()), Arc::new(Retried));
     }
 }
 
@@ -89,6 +123,18 @@ fn a_client_message_runs_in_the_senders_turn() {
                     && game.ui.chat.recent_lines(10).iter().any(|l| l == TOLD)
             });
             assert_eq!(*SEEN.lock().unwrap(), [(true, true, true)]);
+            // The sender is now in the Nether, the Overworld still open: a message their handler
+            // refuses as busy is retried from the first level pass, and runs in their turn with
+            // their level in place.
+            let host: &mut dyn mod_api::ClientHost = game;
+            assert_eq!(
+                host.send_payload_to_server(&PayloadId(RETRIED.into()), PayloadBytes(Vec::new())),
+                Ok(mod_api::PayloadAccepted::Queued)
+            );
+            drive(game, "the busy message retried", |_| {
+                !RETRY.lock().unwrap().is_empty()
+            });
+            assert_eq!(*RETRY.lock().unwrap(), [(true, "minecraft:the_nether")]);
             game.leave_server(None).unwrap();
         });
     });

@@ -21,7 +21,19 @@ impl Game<'_> {
         conn: u32,
         f: impl FnOnce(&mut Self) -> R,
     ) -> Result<R, TurnRefused> {
-        let swap = self.enter_guest_at(gi, conn, self.dim)?;
+        self.as_guest_at_from(gi, conn, self.dim, f)
+    }
+
+    /// `as_guest_at` after the caller put the guest's level in place: the outer body is still
+    /// in `outer_dimension`, as for `enter_guest_in_dimension`.
+    fn as_guest_at_from<R>(
+        &mut self,
+        gi: usize,
+        conn: u32,
+        outer_dimension: Dim,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> Result<R, TurnRefused> {
+        let swap = self.enter_guest_at(gi, conn, outer_dimension)?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             crate::game::dedicated::crash_fixture("guest", || {
                 self.lan
@@ -59,15 +71,29 @@ impl Game<'_> {
         conn: u32,
         f: impl FnOnce(&mut Self) -> R,
     ) -> Option<R> {
+        self.as_guest_messaged_from(conn, self.dim, f)
+    }
+
+    /// `as_guest_messaged` after the caller put the guest's level in place: the outer body is
+    /// still in `outer_dimension` (`for_player`'s order).
+    pub(in crate::game) fn as_guest_messaged_from<R>(
+        &mut self,
+        conn: u32,
+        outer_dimension: Dim,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
         // The outer capture comes back even when `f` panics (a native callback can), so later
         // feedback isn't trapped in this guest's capture. What the guest was already told still
         // reaches them before the panic goes on, after `as_guest` has restored the swap.
-        let (result, lines) = self.as_guest(conn, |game| {
-            let outer = game.chat_capture.replace(Vec::new());
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(game)));
-            let lines = std::mem::replace(&mut game.chat_capture, outer).unwrap_or_default();
-            (result, lines)
-        })?;
+        let gi = self.guest_index(conn)?;
+        let (result, lines) = self
+            .as_guest_at_from(gi, conn, outer_dimension, |game| {
+                let outer = game.chat_capture.replace(Vec::new());
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(game)));
+                let lines = std::mem::replace(&mut game.chat_capture, outer).unwrap_or_default();
+                (result, lines)
+            })
+            .ok()?;
         if let Some(host) = self.lan.as_ref() {
             for line in lines {
                 host.hub.send_to(

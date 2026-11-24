@@ -64,18 +64,30 @@ impl Game<'_> {
         // packet from them does. A delivery with no player in the world (configuration, a
         // guest not placed yet, one already acting) keeps the plain server context.
         let mut turn = None;
-        if let Some((conn, theirs)) = delivery.conn.and_then(|conn| self.payload_turn(conn)) {
-            // A first delivery is drained in the sender's own level pass; one a busy handler
-            // deferred is retried from the first pass, so their level is put in place for it,
-            // as a leaving player's turn does.
+        if let Some(conn) = delivery.conn
+            && let Some(theirs) = self.payload_turn(conn)
+        {
+            // A first delivery is drained in the sender's own level pass, so their level is
+            // already in place and the turn costs what a packet's does. Only a delivery a busy
+            // handler deferred is retried from the first pass; for it their level is put in
+            // place (a level swap, once per retry), as a leaving player's turn does, and the
+            // outer body is told it stays in `back` (`for_player`'s order).
             let back = self.dim;
+            let entered = theirs == back
+                || match self.enter_level(theirs) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        log::error!("could not open {}: {e}", theirs.id());
+                        false
+                    }
+                };
             // A handler's panic goes on only once the outer level is back in place.
             let mut unwound = Ok(());
-            if theirs == back || self.enter_level(theirs).is_ok() {
+            if entered {
                 let endpoint = delivery.endpoint.clone();
                 let incoming = &mut delivery.incoming;
                 unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.as_guest_messaged(conn, |game| {
+                    self.as_guest_messaged_from(conn, back, |game| {
                         turn = Some(game.receive_server_payload(endpoint, incoming));
                     });
                 }));
@@ -107,9 +119,9 @@ impl Game<'_> {
 impl Game<'_> {
     /// The level of the player on connection `conn` when a payload from them can run in their
     /// turn: they are in the world, and not already the player acting.
-    fn payload_turn(&self, conn: u32) -> Option<(u32, crate::game::Dim)> {
+    fn payload_turn(&self, conn: u32) -> Option<crate::game::Dim> {
         let guest = self.lan.as_ref()?.hub.guest(conn)?;
         (guest.placed && !self.lan_guest_swaps.contains(&conn))
-            .then(|| (conn, crate::game::Dim::from_id(&guest.dimension)))
+            .then(|| crate::game::Dim::from_id(&guest.dimension))
     }
 }
