@@ -2393,6 +2393,7 @@ impl Hub {
                 carried,
             }));
             g.menu_sent = items;
+            g.sent_carried = g.carried.clone();
             g.sent_selected = g.selected;
         })
     }
@@ -3980,6 +3981,17 @@ impl Hub {
                     item: net,
                 }));
                 g.menu_sent[slot] = now;
+            });
+        }
+        // AbstractContainerMenu.synchronizeCarriedToRemote: a cursor stack that changed
+        // outside a click the client predicted (a native mod's `ItemPlace::PlayerCursor`
+        // write) reaches the client, whichever menu is open.
+        if self.guests[i].carried != self.guests[i].sent_carried {
+            let carried = self.guests[i].carried.clone();
+            let net = self.stack(&carried);
+            self.guests.update(i, |g| {
+                g.send(&C::SetCursorItem(play::SetCursorItem { item: net }));
+                g.sent_carried = carried;
             });
         }
     }

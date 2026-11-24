@@ -3485,3 +3485,33 @@ fn a_moves_turn_still_counts_while_a_teleport_awaits() {
     assert!(hub.guests[0].awaiting_teleport.is_some());
     assert!(hub.guests[0].left_reason.is_empty());
 }
+
+#[test]
+fn a_cursor_written_outside_a_click_reaches_the_client_once() {
+    fn cursors(rx: &std::sync::mpsc::Receiver<crate::lan::Out>) -> Vec<Option<u32>> {
+        let mut sent = Vec::new();
+        while let Ok(out) = rx.try_recv() {
+            let crate::lan::Out::Packet(body) = out else {
+                continue;
+            };
+            let mut r = horizon_protocol::buf::Reader::new(&body);
+            let id = r.varint().unwrap();
+            if let C::SetCursorItem(p) = C::decode(id, r.rest()).unwrap() {
+                sent.push(p.item.map(|s| s.count as u32));
+            }
+        }
+        sent
+    }
+    let (mut hub, rx) = hub_with_a_guest();
+    hub.sync_player_state(0);
+    assert_eq!(cursors(&rx), [], "an empty cursor the client knows is not sent");
+    // As a native mod's `ItemPlace::PlayerCursor` write leaves the guest's record.
+    hub.guests.update(0, |g| g.carried = Some(ItemStack::new("minecraft:stick", 3)));
+    hub.sync_player_state(0);
+    assert_eq!(cursors(&rx), [Some(3)]);
+    hub.sync_player_state(0);
+    assert_eq!(cursors(&rx), [], "sent once");
+    hub.guests.update(0, |g| g.carried = None);
+    hub.sync_player_state(0);
+    assert_eq!(cursors(&rx), [None]);
+}

@@ -804,6 +804,7 @@ impl Game<'_> {
                 {
                     let net = host.hub.stack(&carried);
                     let _ = host.hub.update_guest(conn, |g| {
+                        g.sent_carried = carried.clone();
                         g.carried = carried;
                         g.send(&C::SetCursorItem(play::SetCursorItem { item: net }));
                     });

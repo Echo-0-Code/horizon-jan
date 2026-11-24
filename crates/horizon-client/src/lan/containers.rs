@@ -1061,6 +1061,7 @@ impl Hub {
             let net = self.stack(&carried);
             self.guests[i].send(&C::SetCursorItem(play::SetCursorItem { item: net }));
         }
+        self.guests.update(i, |g| g.sent_carried = carried);
         // What the client now believes equals the server's state.
         let items: Vec<_> = (0..total).map(|s| self.view_slot(i, world, s)).collect();
         self.guests.update(i, |g| {
