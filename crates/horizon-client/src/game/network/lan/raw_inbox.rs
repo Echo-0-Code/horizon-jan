@@ -125,3 +125,7 @@ impl Game<'_> {
             .then(|| crate::game::Dim::from_id(&guest.dimension))
     }
 }
+
+#[cfg(test)]
+#[path = "raw_inbox_tests.rs"]
+mod tests;
