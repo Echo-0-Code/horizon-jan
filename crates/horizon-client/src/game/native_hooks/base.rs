@@ -4864,18 +4864,17 @@ impl Game<'_> {
     /// single-player window included, sees vanilla's and the content mods' recipes,
     /// not the world's data packs', unless a mod had the server send it the type
     /// (`native_datapack_sync`).
-    pub(in crate::game) fn recipes_of_type(
-        &self,
-        kind: &str,
-    ) -> Arc<[crate::crafting::RecipeSnapshot]> {
+    pub(in crate::game) fn recipes_of_type(&self, kind: &str) -> crate::crafting::RecipesOfType {
         if self.outside_world() {
             return Default::default();
         }
-        self.recipes()
-            .by_type
-            .get(kind)
-            .cloned()
-            .unwrap_or_default()
+        crate::crafting::RecipesOfType(
+            self.recipes()
+                .by_type
+                .get(kind)
+                .cloned()
+                .unwrap_or_default(),
+        )
     }
     /// The recipe types `recipes_of_type` answers, sorted: each type with a recipe in force
     /// and each type a registered serializer produces. Empty outside a world.

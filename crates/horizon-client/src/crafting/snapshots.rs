@@ -265,6 +265,17 @@ pub struct RecipeSnapshot {
     /// The recipe's file, as the data pack wrote it.
     pub json: Arc<Value>,
 }
+/// The recipes of one type as `recipes_of_type` hands them to mods. They cross to the mod API
+/// one by one: a recipe whose parts the API can't carry (a result naming an item it doesn't
+/// know, or components it refuses) is left out on its own instead of emptying the list.
+#[derive(Clone, Debug, Default)]
+pub struct RecipesOfType(pub Arc<[RecipeSnapshot]>);
+impl std::ops::Deref for RecipesOfType {
+    type Target = [RecipeSnapshot];
+    fn deref(&self) -> &[RecipeSnapshot] {
+        &self.0
+    }
+}
 impl RecipeSnapshot {
     /// Required inputs must have enumerable candidates before consumer publication.
     /// The recipe and its stack predicates remain in the effective recipe map.

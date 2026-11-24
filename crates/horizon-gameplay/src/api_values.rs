@@ -591,6 +591,40 @@ impl TryIntoApi for horizon_client::crafting::RecipeSnapshot {
     }
 }
 
+/// Recipe by recipe: one that can't cross (`StackReadError`) is left out and logged once, so
+/// the others of its type still reach the mod (a single unknown result item used to empty the
+/// whole list through the forwarder's `unwrap_or_default`).
+impl TryIntoApi for horizon_client::crafting::RecipesOfType {
+    type Api = std::sync::Arc<[mod_api::Recipe]>;
+    type Error = StackReadError;
+    fn try_into_api(&self) -> Result<Self::Api, Self::Error> {
+        Ok(self
+            .iter()
+            .filter_map(|recipe| match recipe.try_into_api() {
+                Ok(converted) => Some(converted),
+                Err(error) => {
+                    log_unconverted_recipe(&recipe.id, error);
+                    None
+                }
+            })
+            .collect())
+    }
+}
+
+fn log_unconverted_recipe(id: &str, error: StackReadError) {
+    static LOGGED: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+        std::sync::Mutex::new(None);
+    let mut logged = LOGGED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if logged
+        .get_or_insert_with(Default::default)
+        .insert(id.to_owned())
+    {
+        log::warn!("recipes: {id} is left out of recipes_of_type: {error:?}");
+    }
+}
+
 impl TryIntoApi for horizon_client::stations::AnvilResult {
     type Api = mod_api::item::stations::AnvilResult;
     type Error = StackReadError;
@@ -883,4 +917,25 @@ impl TryIntoApi for horizon_world::chunk::BlockState {
 pub fn block_metadata_table()
 -> Result<&'static horizon_mod_runtime::block_definitions::Blocks, mod_api::BlockStateError> {
     mod_api::__private::block_definitions().ok_or(mod_api::BlockStateError::Unavailable)
+}
+
+#[cfg(test)]
+mod recipes_of_type_tests {
+    use super::TryIntoApi;
+    use horizon_client::crafting::{RecipeSnapshot, RecipesOfType};
+    use std::sync::Arc;
+
+    /// A recipe whose result the mod API doesn't know drops out alone; the rest of its type
+    /// still reaches the mod.
+    #[test]
+    fn one_unconvertible_recipe_leaves_the_others() {
+        let json = Arc::new(serde_json::json!({"type": "minecraft:crafting_shaped"}));
+        let mut broken = RecipeSnapshot::new("test:broken", "minecraft:crafting", json.clone());
+        broken.results = vec![horizon_items::items::ItemStack::new("test:no_such_item", 1)];
+        let fine = RecipeSnapshot::new("test:fine", "minecraft:crafting", json);
+        let table = RecipesOfType(vec![broken, fine].into());
+        let converted = table.try_into_api().unwrap();
+        let ids: Vec<&str> = converted.iter().map(|recipe| recipe.id.as_str()).collect();
+        assert_eq!(ids, ["test:fine"]);
+    }
 }

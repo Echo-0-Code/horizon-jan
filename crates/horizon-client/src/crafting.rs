@@ -15,6 +15,7 @@ use horizon_world::{component_patch::Patch, loot::PackOverlay};
 mod snapshots;
 pub use snapshots::{
     FireworkShapeIngredient, RecipeRule, RecipeSnapshot, RecipeTemplate, RecipeTrimPattern,
+    RecipesOfType,
 };
 mod cooking;
 mod ingredient;
