@@ -63,43 +63,15 @@ impl Game<'_> {
         // the sending `ServerPlayer`: a handler acts as that player, in their level, as a
         // packet from them does. A delivery with no player in the world (configuration, a
         // guest not placed yet, one already acting) keeps the plain server context.
+        let endpoint = delivery.endpoint.clone();
+        let incoming = &mut delivery.incoming;
+        // Set inside the turn, so a turn that ran the handler and then ended without a result
+        // (the host closed during it) doesn't run it again below.
         let mut turn = None;
-        if let Some(conn) = delivery.conn
-            && let Some(theirs) = self.payload_turn(conn)
-        {
-            // A first delivery is drained in the sender's own level pass, so their level is
-            // already in place and the turn costs what a packet's does. Only a delivery a busy
-            // handler deferred is retried from the first pass; for it their level is put in
-            // place (a level swap, once per retry), as a leaving player's turn does, and the
-            // outer body is told it stays in `back` (`for_player`'s order).
-            let back = self.dim;
-            let entered = theirs == back
-                || match self.enter_level(theirs) {
-                    Ok(()) => true,
-                    Err(e) => {
-                        log::error!("could not open {}: {e}", theirs.id());
-                        false
-                    }
-                };
-            // A handler's panic goes on only once the outer level is back in place.
-            let mut unwound = Ok(());
-            if entered {
-                let endpoint = delivery.endpoint.clone();
-                let incoming = &mut delivery.incoming;
-                unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.as_guest_messaged_from(conn, back, |game| {
-                        turn = Some(game.receive_server_payload(endpoint, incoming));
-                    });
-                }));
-            }
-            if self.dim != back
-                && let Err(e) = self.enter_level(back)
-            {
-                log::error!("could not reopen {}: {e}", back.id());
-            }
-            if let Err(payload) = unwound {
-                std::panic::resume_unwind(payload);
-            }
+        if let Some(conn) = delivery.conn {
+            self.as_payload_sender(conn, |game| {
+                turn = Some(game.receive_server_payload(endpoint, incoming));
+            });
         }
         let finished = match turn {
             Some(finished) => finished,
@@ -117,6 +89,41 @@ impl Game<'_> {
 }
 
 impl Game<'_> {
+    /// `f` as the player on connection `conn`, in their level, as their packet's handler runs;
+    /// None when they can't act (not in the world, already the player acting, their level
+    /// can't be opened). A delivery is normally handled in its sender's level pass, so their
+    /// level is already in place; when it isn't, it is put in place for the turn (a full level
+    /// swap, there and back) and the outer body stays in its own level (`for_player`'s order).
+    /// A panic in `f` goes on once the outer level is back in place.
+    pub(super) fn as_payload_sender<R>(
+        &mut self,
+        conn: u32,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
+        let theirs = self.payload_turn(conn)?;
+        let back = self.dim;
+        if theirs != back
+            && let Err(e) = self.enter_level(theirs)
+        {
+            log::error!("could not open {}: {e}", theirs.id());
+            if self.dim != back
+                && let Err(e) = self.enter_level(back)
+            {
+                log::error!("could not reopen {}: {e}", back.id());
+            }
+            return None;
+        }
+        let turn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.as_guest_messaged_from(conn, back, f)
+        }));
+        if self.dim != back
+            && let Err(e) = self.enter_level(back)
+        {
+            log::error!("could not reopen {}: {e}", back.id());
+        }
+        turn.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+    }
+
     /// The level of the player on connection `conn` when a payload from them can run in their
     /// turn: they are in the world, and not already the player acting.
     fn payload_turn(&self, conn: u32) -> Option<crate::game::Dim> {
