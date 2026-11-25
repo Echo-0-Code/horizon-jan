@@ -113,6 +113,13 @@ impl Game<'_> {
     /// cat or ocelot dashing after its target (their shared sprinting flag);
     /// false for the other kinds.
     pub(super) fn entity_is_sprinting(&self, entity: EntityRef) -> Option<bool> {
+        // A guest's stored body keeps no sprint between its turns (its turn ends with
+        // `sprinting = false` on it): the guest's own flag is what `handlePlayerCommand` set.
+        if self.is_logical_server()
+            && let Some(Target::Guest(conn)) = self.native_entity_target(entity)
+        {
+            return Some(self.command_guest(conn)?.sprinting);
+        }
         Some(match self.native_own_state_body(entity)? {
             Body::Player(p) => p.sprinting,
             Body::Mob(m) => m.extra.sprinting,

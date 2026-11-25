@@ -433,6 +433,29 @@ fn player_set_velocity_replaces_a_guests_motion() {
     });
 }
 
+/// `entity_is_sprinting` reads a guest's sprint (`handlePlayerCommand`'s flag)
+/// between its turns and from another guest's turn, though its stored body
+/// keeps none.
+#[test]
+#[ignore = "daily"]
+fn entity_is_sprinting_reads_a_guests_sprint_outside_its_turn() {
+    with_guests(|game| {
+        let a = game.player(12).unwrap();
+        let hub = &mut game.lan.as_mut().unwrap().hub;
+        hub.update_guest(12, |g| g.sprinting = true).unwrap();
+        let stored = hub.guest(12).unwrap().motion.as_ref().unwrap().sprinting;
+        assert!(!stored);
+        assert_eq!(game.entity_is_sprinting(a.entity()), Some(true));
+        game.as_guest(13, |game| {
+            assert_eq!(game.entity_is_sprinting(a.entity()), Some(true));
+        })
+        .unwrap();
+        let hub = &mut game.lan.as_mut().unwrap().hub;
+        hub.update_guest(12, |g| g.sprinting = false).unwrap();
+        assert_eq!(game.entity_is_sprinting(a.entity()), Some(false));
+    });
+}
+
 /// Native services can reach B during A's turn without exposing displaced
 /// inventories or changing ordinary command resolution during nested turns.
 #[test]
