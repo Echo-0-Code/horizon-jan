@@ -1485,6 +1485,7 @@ fn builtin_component(
             }
         }
         "minecraft:tool" => write_tool(value, ids, &mut w)?,
+        "minecraft:equippable" => write_equippable(value, ids, &mut w)?,
         "minecraft:consumable" => write_consumable(value, ids, &mut w)?,
         "minecraft:bees" => write_bees(value, ids, &mut w)?,
         "minecraft:block_state" => write_block_state(value, &mut w)?,
@@ -1708,6 +1709,65 @@ fn write_block_state(
         w.string(&value.to_string().ok()?);
     }
     Some(())
+}
+
+/// `Equippable.STREAM_CODEC` from its saved form: the slot (`EquipmentSlot.getId`),
+/// the equip sound, the asset id, the camera overlay, the allowed entities, its
+/// five flags and the shearing sound, each at its codec default when left out.
+fn write_equippable(
+    value: &horizon_core::nbt::Tag,
+    ids: &dyn Fn(&str, &str) -> Option<i32>,
+    w: &mut horizon_protocol::buf::Writer,
+) -> Option<()> {
+    use horizon_world::datafix::dynamic::{as_bool_opt, namespaced};
+    let slot = match tag_text(value.get("slot")?)?.as_str() {
+        "mainhand" => 0,
+        "feet" => 1,
+        "legs" => 2,
+        "chest" => 3,
+        "head" => 4,
+        "offhand" => 5,
+        "body" => 6,
+        "saddle" => 7,
+        _ => return None,
+    };
+    w.varint(slot);
+    let default_sound = |name: &str| horizon_core::nbt::Tag::String(name.into());
+    let sound =
+        |key: &str, default: &str, w: &mut horizon_protocol::buf::Writer| match value.get(key) {
+            Some(sound) => write_sound(sound, ids, w),
+            None => write_sound(&default_sound(default), ids, w),
+        };
+    sound("equip_sound", "minecraft:item.armor.equip_generic", w)?;
+    for key in ["asset_id", "camera_overlay"] {
+        match value.get(key) {
+            Some(id) => {
+                w.bool(true);
+                w.string(&namespaced(&tag_text(id)?));
+            }
+            None => w.bool(false),
+        }
+    }
+    match value.get("allowed_entities") {
+        Some(entities) => {
+            w.bool(true);
+            write_holder_set("minecraft:entity_type", entities, ids, w)?;
+        }
+        None => w.bool(false),
+    }
+    for (key, default) in [
+        ("dispensable", true),
+        ("swappable", true),
+        ("damage_on_hurt", true),
+        ("equip_on_interact", false),
+        ("can_be_sheared", false),
+    ] {
+        w.bool(match value.get(key) {
+            Some(flag) => as_bool_opt(Some(flag))?,
+            None => default,
+        });
+    }
+    sound("shearing_sound", "minecraft:item.shears.snip", w)
 }
 
 /// `Tool.STREAM_CODEC` from `Tool.CODEC`'s saved form: the rules (blocks, an
@@ -2197,6 +2257,12 @@ pub(super) fn network_stack(
             // The client predicts mining with the stack's own tool and shows
             // the stack's own attribute modifiers (#14641).
             ("minecraft:tool", horizon_protocol::item::component::TOOL),
+            // The client draws worn armour from the stack's own equippable and
+            // predicts which slot a click or a use puts it in.
+            (
+                "minecraft:equippable",
+                horizon_protocol::item::component::EQUIPPABLE,
+            ),
             (
                 "minecraft:consumable",
                 horizon_protocol::item::component::CONSUMABLE,

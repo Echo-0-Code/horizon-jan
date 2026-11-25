@@ -2608,6 +2608,58 @@ mod tests {
     /// `ItemAttributeModifiers.STREAM_CODEC`) and come back as their codecs
     /// save them, so the client predicts mining and shows the tooltip from
     /// the stack, not from its item (#14641). A removed one stays removed.
+    /// A stack given its own `equippable` (a mod's armour, `/give stick[equippable={slot:"feet"}]`)
+    /// reaches the client with it: its slot and its armour model.
+    #[test]
+    fn a_stacks_own_equippable_crosses_the_wire() {
+        use horizon_protocol::buf::{Codec, Reader, Writer};
+        use horizon_protocol::item::Slot;
+        let mut components = vec![String::new(); component::EQUIPPABLE as usize + 1];
+        components[component::EQUIPPABLE as usize] = "minecraft:equippable".into();
+        let builtin = Builtin {
+            registries: [
+                (
+                    "minecraft:item".into(),
+                    Ids::from_names(vec!["minecraft:air".into(), "minecraft:stick".into()]),
+                ),
+                (
+                    "minecraft:data_component_type".into(),
+                    Ids::from_names(components),
+                ),
+            ]
+            .into(),
+        };
+        let ids = |registry: &str, name: &str| builtin.get(registry)?.id(name);
+        let s = |v: &str| Tag::String(v.into());
+        let mut stick = ItemStack::new("minecraft:stick", 1);
+        stick.data_mut().set_other(
+            "minecraft:equippable",
+            Some(Tag::compound([
+                ("slot", s("feet")),
+                ("equip_sound", s("minecraft:item.armor.equip_iron")),
+                ("asset_id", s("example:shiny")),
+                ("swappable", Tag::Byte(0)),
+            ])),
+        );
+        let sent = crate::lan::guest::stack_to_network(|_| 1, ids, &Some(stick));
+        let mut w = Writer::new();
+        Slot::write(&sent, &mut w);
+        let mut r = Reader::new(&w.data);
+        let received = Slot::read(&mut r).unwrap().unwrap();
+        assert_eq!(r.remaining(), 0);
+        let back = from_network(&received, &builtin, &Dynamic::default());
+        let items = crate::items::Items::for_tests(Default::default());
+        assert_eq!(
+            equippable(&back, &items),
+            Some(Equippable {
+                slot: "feet".into(),
+                asset_id: Some("example:shiny".into()),
+                camera_overlay: None,
+                swappable: false,
+            })
+        );
+    }
+
     #[test]
     fn a_stacks_tool_and_attribute_modifiers_cross_the_wire() {
         use horizon_protocol::buf::{Codec, Reader, Writer};
